@@ -1,0 +1,14 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.1
+reloadable = true
+
+[libraries]
+linux.debug.x86_64 =     "res://../target/debug/libfellini.so"
+linux.release.x86_64 =   "res://../target/release/libfellini.so"
+windows.debug.x86_64 =   "res://../target/debug/fellini.dll"
+windows.release.x86_64 = "res://../target/release/fellini.dll"
+macos.debug =            "res://../target/debug/libfellini.dylib"
+macos.release =          "res://../target/release/libfellini.dylib"
+macos.debug.arm64 =      "res://../target/debug/libfellini.dylib"
+macos.release.arm64 =    "res://../target/release/libfellini.dylib"
