@@ -7,4 +7,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+ffmpeg-next = "7.0.4"
 godot = "0.1.3"

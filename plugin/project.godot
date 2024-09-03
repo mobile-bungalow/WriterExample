@@ -19,6 +19,10 @@ config/icon="res://icon.svg"
 
 project/assembly_name="plugin"
 
+[editor]
+
+movie_writer/movie_file="/Users/paulmay/Desktop/testo.mp4"
+
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/felliniwriter/plugin.cfg")

@@ -1,10 +1,17 @@
+mod writer;
+
 use godot::engine::{Engine, MovieWriter};
 use godot::prelude::*;
 
-mod writer;
 pub use writer::FelliniWriter;
 
 struct FelliniMovieWriter;
+
+enum Error {
+    Setup,
+    IoError,
+    LimitReached,
+}
 
 #[gdextension]
 unsafe impl ExtensionLibrary for FelliniMovieWriter {
@@ -14,7 +21,7 @@ unsafe impl ExtensionLibrary for FelliniMovieWriter {
 
     fn on_level_init(level: InitLevel) {
         if level == InitLevel::Scene {
-            godot_print!("registering writer singleton");
+            godot_print!("Registering fellini writer singleton.");
             let writer = FelliniWriter::new_alloc();
             Engine::singleton()
                 .register_singleton(StringName::from("Fellini"), writer.clone().upcast());
