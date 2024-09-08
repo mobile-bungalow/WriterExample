@@ -1,3 +1,4 @@
+mod conversion;
 mod writer;
 
 use godot::engine::{Engine, MovieWriter};
