@@ -2,6 +2,7 @@ use ffmpeg::{
     codec, decoder, encoder, format, frame, log, media, picture, Dictionary, Packet, Rational,
 };
 use ffmpeg_next as ffmpeg;
+use ffmpeg_next::ffi::AV_TIME_BASE;
 
 use godot::engine::a_star_grid_2d::ExFillSolidRegion;
 use godot::engine::audio_server::SpeakerMode;
@@ -24,20 +25,42 @@ pub struct FelliniWriter {
 pub struct Settings {
     pub codec: ffmpeg::codec::Id,
     pub max_file_size: usize,
+    pub pixel_fmt: ffmpeg::format::Pixel,
     pub audio_mix_rate: u32,
+    pub time_base: i32,
+    pub fps: i32,
+    pub bitrate: usize,
 }
 
 impl Settings {
     const DEFAULT_MAX_FILE_SIZE: usize = 1 << 30;
     const DEFAULT_MIX_RATE_HZ: u32 = 44_100;
+    const DEFAULT_FPS: i32 = 60;
+    const MAX_BITRATE: usize = 4096;
 }
 
-impl Default for Settings {
-    fn default() -> Self {
+impl Settings {
+    fn mpeg() -> Self {
         Self {
             codec: ffmpeg::codec::Id::MPEG4,
+            pixel_fmt: ffmpeg::format::Pixel::YUV420P,
             max_file_size: Self::DEFAULT_MAX_FILE_SIZE,
             audio_mix_rate: Self::DEFAULT_MIX_RATE_HZ,
+            time_base: 65_535,
+            fps: Self::DEFAULT_FPS,
+            bitrate: Self::MAX_BITRATE,
+        }
+    }
+
+    fn webm() -> Self {
+        Self {
+            codec: ffmpeg::codec::Id::VP9,
+            pixel_fmt: ffmpeg::format::Pixel::YUVA420P,
+            max_file_size: Self::DEFAULT_MAX_FILE_SIZE,
+            audio_mix_rate: Self::DEFAULT_MIX_RATE_HZ,
+            time_base: 65_535,
+            fps: Self::DEFAULT_FPS,
+            bitrate: Self::MAX_BITRATE,
         }
     }
 }
@@ -66,7 +89,7 @@ impl IMovieWriter for FelliniWriter {
     fn init(base: Base<MovieWriter>) -> Self {
         let out = Self {
             state: FelliniState::PreRecording,
-            settings: Default::default(),
+            settings: Settings::mpeg(),
             base,
         };
 
@@ -85,7 +108,7 @@ impl IMovieWriter for FelliniWriter {
         let path: PathBuf = path.to_string().into();
         let ext = path.extension().and_then(|s| s.to_str());
         match ext {
-            Some("mp4" | "webm" | "mov") => {
+            Some("mp4" | "webm" | "mov" | "hevc") => {
                 godot_print!("using fellini writer for extension {:?}", ext.unwrap());
                 true
             }
@@ -118,9 +141,22 @@ impl IMovieWriter for FelliniWriter {
             };
         }
 
+        let path: PathBuf = base_path.to_string().into();
+        let ext = path.extension().and_then(|s| s.to_str());
+        match ext {
+            Some("mp4") => {
+                self.settings = Settings::mpeg();
+            }
+            Some("webm") => {
+                self.settings = Settings::webm();
+            }
+            _ => {}
+        }
+
         gd_unwrap!(ffmpeg::init());
         let path = PathBuf::from(&base_path.to_string());
         let mut output = gd_unwrap!(ffmpeg::format::output(&path));
+        self.settings.fps = fps as i32;
 
         let codec = gd_unwrap!(ffmpeg::encoder::find(self.settings.codec)
             .ok_or_else(|| ffmpeg::Error::from(ffmpeg::error::EINVAL)));
@@ -132,9 +168,10 @@ impl IMovieWriter for FelliniWriter {
 
         enc.set_width(movie_size.x.unsigned_abs());
         enc.set_height(movie_size.y.unsigned_abs());
-        enc.set_time_base((1, 65_535));
-        enc.set_frame_rate(Some((fps as i32, 1)));
-        enc.set_format(ffmpeg::format::Pixel::YUV420P);
+        enc.set_bit_rate(self.settings.bitrate);
+        enc.set_time_base((1, self.settings.time_base));
+        enc.set_frame_rate(Some((self.settings.fps as i32, 1)));
+        enc.set_format(self.settings.pixel_fmt);
 
         let codec_context = gd_unwrap!(enc.open_as(codec));
         stream.set_parameters(&codec_context);
@@ -185,22 +222,28 @@ impl IMovieWriter for FelliniWriter {
 
                 let width = frame_image.get_width() as u32;
                 let height = frame_image.get_height() as u32;
-                let mut frame = frame::Video::new(ffmpeg::format::Pixel::YUV420P, width, height);
+                let mut frame = frame::Video::new(self.settings.pixel_fmt, width, height);
 
-                for plane in 0..3 {
+                for plane in 0..frame.planes() {
                     let color = if plane == 0 { 255 } else { 128 };
                     frame.data_mut(plane).fill(color);
                 }
 
+                let pts = conversion::frame_to_pts(
+                    *current_frame,
+                    self.settings.fps.into(),
+                    self.settings.time_base.into(),
+                );
+
                 frame.set_kind(picture::Type::None);
-                frame.set_pts(Some(*current_frame * (65_535 / 60)));
+                frame.set_pts(Some(pts));
 
                 gd_unwrap!(encoder.send_frame(&frame));
 
                 let mut encoded = Packet::empty();
                 while let Ok(_) = encoder.receive_packet(&mut encoded) {
                     encoded.set_stream(0);
-                    encoded.set_pts(Some(*current_frame * (65_535 / 60)));
+                    encoded.set_pts(Some(pts));
                     gd_unwrap!(encoded.write_interleaved(output));
                 }
 
@@ -233,16 +276,25 @@ impl IMovieWriter for FelliniWriter {
                 output,
                 path,
                 encoder,
+                current_frame,
                 ..
             } => {
-                gd_womp!(encoder.send_eof());
-                gd_womp!(output.write_trailer());
-
                 let mut encoded = Packet::empty();
-                encoded.set_stream(0);
+
+                let pts = conversion::frame_to_pts(
+                    *current_frame,
+                    self.settings.fps.into(),
+                    self.settings.time_base.into(),
+                );
                 while let Ok(_) = encoder.receive_packet(&mut encoded) {
+                    encoded.set_stream(0);
+                    encoded.set_pts(pts.into());
+
                     gd_womp!(encoded.write_interleaved(output));
                 }
+
+                gd_womp!(output.write_trailer());
+                gd_womp!(encoder.send_eof());
 
                 godot_print!("Finished writing {:?}", path);
                 self.state = FelliniState::PreRecording;
