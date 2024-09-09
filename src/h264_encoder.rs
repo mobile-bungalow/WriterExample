@@ -5,6 +5,7 @@ use ffmpeg_next::{self as ffmpeg, *};
 pub struct H264Encoder {
     width: u32,
     height: u32,
+    path: std::path::PathBuf,
     settings: ConcreteEncoderSettings,
     output_context: format::context::Output,
     encoder: Option<encoder::Video>,
@@ -37,6 +38,7 @@ impl Encoder for H264Encoder {
         Ok(Self {
             width,
             height,
+            path,
             settings,
             output_context,
             encoder: None,
@@ -173,6 +175,7 @@ impl H264Encoder {
         let mut packet = Packet::empty();
 
         while encoder.receive_packet(&mut packet).is_ok() {
+            dbg!(packet.size());
             packet.set_stream(STREAM_INDEX);
 
             packet.rescale_ts(
