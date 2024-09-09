@@ -1,10 +1,6 @@
-use ffmpeg::{
-    codec, decoder, encoder, format, frame, log, media, picture, Dictionary, Packet, Rational,
-};
+use ffmpeg::frame;
 use ffmpeg_next as ffmpeg;
-use ffmpeg_next::ffi::AV_TIME_BASE;
 
-use godot::engine::a_star_grid_2d::ExFillSolidRegion;
 use godot::engine::audio_server::SpeakerMode;
 use godot::engine::MovieWriter;
 use godot::global::Error as GdError;
@@ -12,67 +8,25 @@ use godot::prelude::*;
 use std::ffi::c_void;
 use std::path::PathBuf;
 
-use crate::conversion;
+use crate::h264_encoder::H264Encoder;
+use crate::Encoder;
+use crate::EncoderKind;
 
 #[derive(GodotClass)]
 #[class(base=MovieWriter)]
 pub struct FelliniWriter {
     base: Base<MovieWriter>,
-    settings: Settings,
     state: FelliniState,
 }
 
-pub struct Settings {
-    pub codec: ffmpeg::codec::Id,
-    pub max_file_size: usize,
-    pub pixel_fmt: ffmpeg::format::Pixel,
-    pub audio_mix_rate: u32,
-    pub time_base: i32,
-    pub fps: i32,
-    pub bitrate: usize,
-}
-
-impl Settings {
-    const DEFAULT_MAX_FILE_SIZE: usize = 1 << 30;
-    const DEFAULT_MIX_RATE_HZ: u32 = 44_100;
-    const DEFAULT_FPS: i32 = 60;
-    const MAX_BITRATE: usize = 4096;
-}
-
-impl Settings {
-    fn mpeg() -> Self {
-        Self {
-            codec: ffmpeg::codec::Id::MPEG4,
-            pixel_fmt: ffmpeg::format::Pixel::YUV420P,
-            max_file_size: Self::DEFAULT_MAX_FILE_SIZE,
-            audio_mix_rate: Self::DEFAULT_MIX_RATE_HZ,
-            time_base: 65_535,
-            fps: Self::DEFAULT_FPS,
-            bitrate: Self::MAX_BITRATE,
-        }
-    }
-
-    fn webm() -> Self {
-        Self {
-            codec: ffmpeg::codec::Id::VP9,
-            pixel_fmt: ffmpeg::format::Pixel::YUVA420P,
-            max_file_size: Self::DEFAULT_MAX_FILE_SIZE,
-            audio_mix_rate: Self::DEFAULT_MIX_RATE_HZ,
-            time_base: 65_535,
-            fps: Self::DEFAULT_FPS,
-            bitrate: Self::MAX_BITRATE,
-        }
-    }
-}
+const DEFAULT_MIX_RATE_HZ: u32 = 44_100;
 
 enum FelliniState {
     PreRecording,
     Recording {
-        path: PathBuf,
         paused: bool,
         current_frame: i64,
-        output: ffmpeg::format::context::Output,
-        encoder: ffmpeg::encoder::Video,
+        encoder_kind: crate::EncoderKind,
     },
     Failed {
         error: crate::Error,
@@ -87,17 +41,26 @@ impl FelliniWriter {}
 #[godot_api]
 impl IMovieWriter for FelliniWriter {
     fn init(base: Base<MovieWriter>) -> Self {
-        let out = Self {
-            state: FelliniState::PreRecording,
-            settings: Settings::mpeg(),
-            base,
+        let state = if ffmpeg::init().is_ok() {
+            FelliniState::PreRecording
+        } else {
+            FelliniState::Failed {
+                error: crate::Error::Setup,
+            }
         };
+
+        let out = Self { state, base };
 
         out
     }
 
     fn get_audio_mix_rate(&self) -> u32 {
-        self.settings.audio_mix_rate
+        match &self.state {
+            FelliniState::Recording { encoder_kind, .. } => {
+                encoder_kind.settings().audio_sample_rate
+            }
+            _ => DEFAULT_MIX_RATE_HZ,
+        }
     }
 
     fn get_audio_speaker_mode(&self) -> SpeakerMode {
@@ -115,6 +78,7 @@ impl IMovieWriter for FelliniWriter {
             _ => false,
         }
     }
+
     fn write_begin(
         &mut self,
         movie_size: Vector2i,
@@ -141,49 +105,26 @@ impl IMovieWriter for FelliniWriter {
             };
         }
 
-        let path: PathBuf = base_path.to_string().into();
-        let ext = path.extension().and_then(|s| s.to_str());
-        match ext {
-            Some("mp4") => {
-                self.settings = Settings::mpeg();
-            }
-            Some("webm") => {
-                self.settings = Settings::webm();
-            }
-            _ => {}
-        }
-
         gd_unwrap!(ffmpeg::init());
+
         let path = PathBuf::from(&base_path.to_string());
-        let mut output = gd_unwrap!(ffmpeg::format::output(&path));
-        self.settings.fps = fps as i32;
+        //let ext = path.extension().and_then(|s| s.to_str());
 
-        let codec = gd_unwrap!(ffmpeg::encoder::find(self.settings.codec)
-            .ok_or_else(|| ffmpeg::Error::from(ffmpeg::error::EINVAL)));
+        let mut settings = crate::EncoderSettings::default();
+        settings.frame_rate = Some((fps as i32, 1i32).into());
+        let mut kind = gd_unwrap!(H264Encoder::new(
+            movie_size.x as u32,
+            movie_size.y as u32,
+            path.clone(),
+            settings
+        ));
 
-        let mut stream = gd_unwrap!(output.add_stream(codec));
-
-        let context = gd_unwrap!(ffmpeg::codec::Context::from_parameters(stream.parameters()));
-        let mut enc = gd_unwrap!(context.encoder().video());
-
-        enc.set_width(movie_size.x.unsigned_abs());
-        enc.set_height(movie_size.y.unsigned_abs());
-        enc.set_bit_rate(self.settings.bitrate);
-        enc.set_time_base((1, self.settings.time_base));
-        enc.set_frame_rate(Some((self.settings.fps as i32, 1)));
-        enc.set_format(self.settings.pixel_fmt);
-
-        let codec_context = gd_unwrap!(enc.open_as(codec));
-        stream.set_parameters(&codec_context);
-
-        gd_unwrap!(output.write_header());
+        gd_unwrap!(kind.start());
 
         self.state = FelliniState::Recording {
-            path: path.clone(),
+            encoder_kind: EncoderKind::H264(kind),
             paused: false,
-            output,
             current_frame: 0,
-            encoder: codec_context,
         };
 
         godot::global::Error::OK
@@ -192,7 +133,7 @@ impl IMovieWriter for FelliniWriter {
     unsafe fn write_frame(
         &mut self,
         frame_image: Gd<godot::classes::Image>,
-        _audio_frame_block: *const c_void,
+        audio_frame_block: *const c_void,
     ) -> godot::global::Error {
         macro_rules! gd_unwrap {
             ($f:expr) => {
@@ -208,50 +149,54 @@ impl IMovieWriter for FelliniWriter {
                 }
             };
         }
+
+        //let speaker_mode = self.get_audio_speaker_mode();
+        //let audio_mix_rate = self.get_audio_mix_rate();
+
         match &mut self.state {
             FelliniState::Recording {
                 paused,
-                encoder,
                 current_frame,
-                output,
+                encoder_kind,
                 ..
             } => {
                 if *paused {
+                    *current_frame += 1;
                     return godot::global::Error::OK;
                 }
 
                 let width = frame_image.get_width() as u32;
                 let height = frame_image.get_height() as u32;
-                let mut frame = frame::Video::new(self.settings.pixel_fmt, width, height);
+
+                let mut frame =
+                    frame::Video::new(encoder_kind.settings().pixel_format, width, height);
 
                 for plane in 0..frame.planes() {
                     let color = if plane == 0 { 255 } else { 128 };
                     frame.data_mut(plane).fill(color);
                 }
 
-                let pts = conversion::frame_to_pts(
-                    *current_frame,
-                    self.settings.fps.into(),
-                    self.settings.time_base.into(),
-                );
+                gd_unwrap!(encoder_kind.push_video_frame(*current_frame as usize, frame));
 
-                frame.set_kind(picture::Type::None);
-                frame.set_pts(Some(pts));
+                //let samples = crate::conversion::audio_block_size_per_frame(
+                //    speaker_mode,
+                //    audio_mix_rate,
+                //    encoder_kind.settings().frame_rate.0 as u32,
+                //);
+                //let speaker_mode = crate::conversion::godot_speaker_mode_to_ffmpeg(speaker_mode);
+                //let sample_ty = ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
+                //let mut audio_frame = frame::Audio::new(sample_ty, samples as usize, speaker_mode);
 
-                gd_unwrap!(encoder.send_frame(&frame));
-
-                let mut encoded = Packet::empty();
-                while let Ok(_) = encoder.receive_packet(&mut encoded) {
-                    encoded.set_stream(0);
-                    encoded.set_pts(Some(pts));
-                    gd_unwrap!(encoded.write_interleaved(output));
-                }
+                //let byte_ct = samples as usize * std::mem::size_of::<i32>() * 2;
+                //audio_frame.data_mut(0)[..byte_ct].copy_from_slice(std::slice::from_raw_parts(
+                //    audio_frame_block as *const u8,
+                //    byte_ct,
+                //));
+                //gd_unwrap!(encoder_kind.push_audio_frame(*current_frame as usize, audio_frame));
 
                 *current_frame += 1;
             }
-            _ => {
-                todo!("encoding error, bailing until there is a better option");
-            }
+            _ => {}
         }
         godot::global::Error::OK
     }
@@ -272,37 +217,14 @@ impl IMovieWriter for FelliniWriter {
             };
         }
         match &mut self.state {
-            FelliniState::Recording {
-                output,
-                path,
-                encoder,
-                current_frame,
-                ..
-            } => {
-                let mut encoded = Packet::empty();
-
-                let pts = conversion::frame_to_pts(
-                    *current_frame,
-                    self.settings.fps.into(),
-                    self.settings.time_base.into(),
-                );
-                while let Ok(_) = encoder.receive_packet(&mut encoded) {
-                    encoded.set_stream(0);
-                    encoded.set_pts(pts.into());
-
-                    gd_womp!(encoded.write_interleaved(output));
-                }
-
-                gd_womp!(output.write_trailer());
-                gd_womp!(encoder.send_eof());
-
-                godot_print!("Finished writing {:?}", path);
+            FelliniState::Recording { encoder_kind, .. } => {
+                gd_womp!(encoder_kind.finish());
                 self.state = FelliniState::PreRecording;
             }
-            _ => {
-                let _v = 0;
-                todo!("bailed, no tail to write");
+            FelliniState::Failed { error } => {
+                godot_error!("Move File failed to encode, exited with error: {error:?}");
             }
+            _ => {}
         }
     }
 }

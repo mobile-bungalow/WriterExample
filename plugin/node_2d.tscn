@@ -41,7 +41,7 @@ _data = {
 "dumb": SubResource("Animation_nu2un")
 }
 
-[node name="Node2D" type="Node2D"]
+[node name="alpha" type="Node2D"]
 script = ExtResource("1_e3vab")
 metadata/movie_path = "~/Desktop/test.avi"
 

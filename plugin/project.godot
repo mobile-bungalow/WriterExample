@@ -15,14 +15,23 @@ run/main_scene="res://node_2d.tscn"
 config/features=PackedStringArray("4.4", "Forward Plus")
 config/icon="res://icon.svg"
 
+[display]
+
+window/size/transparent=true
+window/per_pixel_transparency/allowed=true
+
 [dotnet]
 
 project/assembly_name="plugin"
 
 [editor]
 
-movie_writer/movie_file="/Users/paulmay/Desktop/testo.mp4"
+movie_writer/movie_file="/Users/paulmay/Desktop/transparency/testo.mp4"
 
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/felliniwriter/plugin.cfg")
+
+[rendering]
+
+viewport/transparent_background=true
