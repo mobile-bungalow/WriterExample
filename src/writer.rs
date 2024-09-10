@@ -1,8 +1,8 @@
 use ffmpeg::frame;
 use ffmpeg_next as ffmpeg;
 
-use godot::engine::audio_server::SpeakerMode;
-use godot::engine::MovieWriter;
+use godot::classes::audio_server::SpeakerMode;
+use godot::classes::MovieWriter;
 use godot::global::Error as GdError;
 use godot::prelude::*;
 use std::ffi::c_void;
@@ -12,10 +12,16 @@ use crate::h264_encoder::H264Encoder;
 use crate::Encoder;
 use crate::EncoderKind;
 
+pub struct CommonSettings {
+    export_alpha_matte: bool,
+    export_motion_vectors: bool,
+}
+
 #[derive(GodotClass)]
 #[class(base=MovieWriter)]
 pub struct FelliniWriter {
     base: Base<MovieWriter>,
+    common_settings: CommonSettings,
     state: FelliniState,
 }
 
@@ -71,7 +77,7 @@ impl IMovieWriter for FelliniWriter {
         let path: PathBuf = path.to_string().into();
         let ext = path.extension().and_then(|s| s.to_str());
         match ext {
-            Some("mp4" | "webm" | "mov" | "hevc") => {
+            Some("mp4" | "webm" | "mov" | "mkv") => {
                 godot_print!("using fellini writer for extension {:?}", ext.unwrap());
                 true
             }
@@ -132,8 +138,8 @@ impl IMovieWriter for FelliniWriter {
 
     unsafe fn write_frame(
         &mut self,
-        frame_image: Gd<godot::classes::Image>,
-        audio_frame_block: *const c_void,
+        frame_image: Option<Gd<godot::classes::Image>>,
+        _audio_frame_block: *const c_void,
     ) -> godot::global::Error {
         macro_rules! gd_unwrap {
             ($f:expr) => {

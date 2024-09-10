@@ -2,7 +2,7 @@ mod conversion;
 mod h264_encoder;
 mod writer;
 
-use godot::engine::{Engine, MovieWriter};
+use godot::classes::{Engine, MovieWriter};
 use godot::prelude::*;
 
 use h264_encoder::H264Encoder;
@@ -52,6 +52,12 @@ unsafe impl ExtensionLibrary for FelliniMovieWriter {
     }
 }
 
+enum Outputs {
+    Color = 0,
+    Depth = 1,
+    MotionVectors = 2,
+}
+
 pub struct ConcreteEncoderSettings {
     // Frame rate in frames per second
     pub frame_rate: ffmpeg_next::Rational,
@@ -96,6 +102,7 @@ impl ConcreteEncoderSettings {
         self
     }
 }
+
 pub(crate) trait Encoder: Sized {
     const CODEC: ffmpeg::codec::Id;
     const DEFAULT_SETTINGS: ConcreteEncoderSettings;

@@ -1,7 +1,10 @@
 use ffmpeg_next::channel_layout::ChannelLayout;
 use ffmpeg_next::format::Pixel;
+use godot::classes::audio_server::SpeakerMode;
 use godot::classes::image::Format;
-use godot::engine::audio_server::SpeakerMode;
+
+use godot::classes::{DisplayServer, Image, RenderingServer};
+use godot::prelude::*;
 
 pub enum ConversionError {
     Unsupported(String),
@@ -50,4 +53,33 @@ pub fn godot_speaker_mode_to_ffmpeg(channel_layout: SpeakerMode) -> ChannelLayou
         SpeakerMode::SURROUND_71 => ChannelLayout::OCTAGONAL,
         _ => ChannelLayout::MONO,
     }
+}
+
+pub fn get_yuva420p_image() -> Option<Gd<Image>> {
+    let rs = RenderingServer::singleton();
+    let ds = DisplayServer::singleton();
+
+    let main_window_id = DisplayServer::MAIN_WINDOW_ID;
+
+    let main_vp_rid = todo!();
+
+    let main_vp_texture = rs.viewport_get_texture(main_vp_rid);
+    let mut vp_tex = rs.texture_2d_get(main_vp_texture);
+
+    vp_tex
+
+    //if rs.viewport_is_using_hdr_2d(main_vp_rid) {
+    //    vp_tex.convert(Image::FORMAT_RGBA8);
+    //    vp_tex.linear_to_srgb();
+    //}
+
+    // RID main_vp_rid = RenderingServer::get_singleton()->viewport_find_from_screen_attachment(DisplayServer::MAIN_WINDOW_ID);
+    // RID main_vp_texture = RenderingServer::get_singleton()->viewport_get_texture(main_vp_rid);
+    // Ref<Image> vp_tex = RenderingServer::get_singleton()->texture_2d_get(main_vp_texture);
+    // if (RenderingServer::get_singleton()->viewport_is_using_hdr_2d(main_vp_rid)) {
+    // 	vp_tex->convert(Image::FORMAT_RGBA8);
+    // 	vp_tex->linear_to_srgb();
+    // }
+    //
+    // return vp_text;
 }

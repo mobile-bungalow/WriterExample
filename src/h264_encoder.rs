@@ -5,7 +5,6 @@ use ffmpeg_next::{self as ffmpeg, *};
 pub struct H264Encoder {
     width: u32,
     height: u32,
-    path: std::path::PathBuf,
     settings: ConcreteEncoderSettings,
     output_context: format::context::Output,
     encoder: Option<encoder::Video>,
@@ -23,7 +22,7 @@ impl Encoder for H264Encoder {
         audio_sample_rate: 44_100,
     };
 
-    const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mp4", "mov", "avi"];
+    const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mp4"];
 
     fn new(
         width: u32,
@@ -38,7 +37,6 @@ impl Encoder for H264Encoder {
         Ok(Self {
             width,
             height,
-            path,
             settings,
             output_context,
             encoder: None,
@@ -175,7 +173,6 @@ impl H264Encoder {
         let mut packet = Packet::empty();
 
         while encoder.receive_packet(&mut packet).is_ok() {
-            dbg!(packet.size());
             packet.set_stream(STREAM_INDEX);
 
             packet.rescale_ts(
