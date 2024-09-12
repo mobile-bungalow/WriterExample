@@ -32,6 +32,7 @@ void main() {
     yuva.w = rgba.a;
 
     imageStore(luma, pixel_coords, vec4(yuva.x));
+    imageStore(alpha, pixel_coords, vec4(yuva.w));
 
     if (pixel_coords.x % 2 == 0 && pixel_coords.y % 2 == 0) {
         ivec2 uv_coords = pixel_coords / 2;

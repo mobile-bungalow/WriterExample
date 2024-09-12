@@ -17,7 +17,8 @@ config/icon="res://icon.svg"
 
 [display]
 
-window/per_pixel_transparency/allowed=true
+window/size/viewport_width=2048
+window/size/viewport_height=1200
 
 [dotnet]
 
@@ -25,12 +26,8 @@ project/assembly_name="plugin"
 
 [editor]
 
-movie_writer/movie_file="/Users/paulmay/Desktop/testo.avi"
+movie_writer/movie_file="/Users/paulmay/Desktop/testo.mp4"
 
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/felliniwriter/plugin.cfg")
-
-[rendering]
-
-viewport/transparent_background=true
