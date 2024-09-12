@@ -13,15 +13,25 @@ use crate::Encoder;
 use crate::EncoderKind;
 
 pub struct CommonSettings {
+    viewport: Option<Gd<godot::classes::Viewport>>,
     export_alpha_matte: bool,
     export_motion_vectors: bool,
+}
+
+impl Default for CommonSettings {
+    fn default() -> Self {
+        Self {
+            viewport: None,
+            export_alpha_matte: false,
+            export_motion_vectors: false,
+        }
+    }
 }
 
 #[derive(GodotClass)]
 #[class(base=MovieWriter)]
 pub struct FelliniWriter {
     base: Base<MovieWriter>,
-    common_settings: CommonSettings,
     state: FelliniState,
 }
 
@@ -138,7 +148,7 @@ impl IMovieWriter for FelliniWriter {
 
     unsafe fn write_frame(
         &mut self,
-        frame_image: Option<Gd<godot::classes::Image>>,
+        frame_image: Gd<godot::classes::Image>,
         _audio_frame_block: *const c_void,
     ) -> godot::global::Error {
         macro_rules! gd_unwrap {
@@ -171,18 +181,7 @@ impl IMovieWriter for FelliniWriter {
                     return godot::global::Error::OK;
                 }
 
-                let width = frame_image.get_width() as u32;
-                let height = frame_image.get_height() as u32;
-
-                let mut frame =
-                    frame::Video::new(encoder_kind.settings().pixel_format, width, height);
-
-                for plane in 0..frame.planes() {
-                    let color = if plane == 0 { 255 } else { 128 };
-                    frame.data_mut(plane).fill(color);
-                }
-
-                gd_unwrap!(encoder_kind.push_video_frame(*current_frame as usize, frame));
+                gd_unwrap!(encoder_kind.push_video_frame(*current_frame as usize, frame_image));
 
                 //let samples = crate::conversion::audio_block_size_per_frame(
                 //    speaker_mode,

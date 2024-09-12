@@ -1,10 +1,15 @@
-use crate::{ConcreteEncoderSettings, Encoder, EncoderSettings, Error};
+use crate::{
+    conversion::ConversionContext, ConcreteEncoderSettings, Encoder, EncoderSettings, Error,
+};
+use godot::classes::Image;
+use godot::prelude::Gd;
 
 use ffmpeg_next::{self as ffmpeg, *};
 
 pub struct H264Encoder {
     width: u32,
     height: u32,
+    converter: crate::conversion::ConversionContext,
     settings: ConcreteEncoderSettings,
     output_context: format::context::Output,
     encoder: Option<encoder::Video>,
@@ -34,7 +39,15 @@ impl Encoder for H264Encoder {
 
         let output_context = format::output(&path).map_err(|_| Error::Setup)?;
 
+        let converter = ConversionContext::new(
+            godot::classes::image::Format::RGBA8,
+            settings.pixel_format,
+            width,
+            height,
+        )?;
+
         Ok(Self {
+            converter,
             width,
             height,
             settings,
@@ -120,16 +133,18 @@ impl Encoder for H264Encoder {
         self.flush()
     }
 
-    fn push_video_frame(
-        &mut self,
-        index: usize,
-        mut frame: ffmpeg::frame::Video,
-    ) -> Result<(), Error> {
+    fn push_video_frame(&mut self, index: usize, frame_image: Gd<Image>) -> Result<(), Error> {
         let pts = crate::conversion::frame_to_pts(
             index as i64,
             self.settings.frame_rate.0.into(),
             self.settings.time_base.1.into(),
         );
+
+        let width = self.converter.width as u32;
+        let height = self.converter.height as u32;
+
+        let mut frame = frame::Video::new(self.settings().pixel_format, width, height);
+        self.converter.convert(frame_image, &mut frame);
 
         frame.set_kind(picture::Type::None);
         frame.set_pts(Some(pts));

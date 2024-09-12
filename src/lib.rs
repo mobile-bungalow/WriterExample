@@ -2,7 +2,7 @@ mod conversion;
 mod h264_encoder;
 mod writer;
 
-use godot::classes::{Engine, MovieWriter};
+use godot::classes::{Engine, Image, MovieWriter};
 use godot::prelude::*;
 
 use h264_encoder::H264Encoder;
@@ -19,6 +19,7 @@ enum Error {
     LimitReached,
     Validation(String),
     Encoding(String),
+    ConversionError(String),
 }
 
 #[gdextension]
@@ -119,7 +120,7 @@ pub(crate) trait Encoder: Sized {
 
     fn start(&mut self) -> Result<(), Error>;
 
-    fn push_video_frame(&mut self, index: usize, frame: ffmpeg::frame::Video) -> Result<(), Error>;
+    fn push_video_frame(&mut self, index: usize, frame: Gd<Image>) -> Result<(), Error>;
 
     fn push_audio_frame(&mut self, index: usize, frame: ffmpeg::frame::Audio) -> Result<(), Error>;
 
@@ -161,11 +162,7 @@ impl EncoderKind {
         }
     }
 
-    pub fn push_video_frame(
-        &mut self,
-        index: usize,
-        frame: ffmpeg::frame::Video,
-    ) -> Result<(), Error> {
+    pub fn push_video_frame(&mut self, index: usize, frame: Gd<Image>) -> Result<(), Error> {
         match self {
             EncoderKind::H264(h264) => h264.push_video_frame(index, frame),
         }
