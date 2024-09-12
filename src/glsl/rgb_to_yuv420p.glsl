@@ -9,18 +9,9 @@ layout(r8, set = 0, binding = 2) uniform writeonly image2D chr_u;
 //// chrominance blue
 layout(r8, set = 0, binding = 3) uniform writeonly image2D chr_v;
 //// alpha
-//layout(r8, set = 0, binding = 4) uniform writeonly image2D alpha;
+layout(r8, set = 0, binding = 4) uniform writeonly image2D alpha;
 
 layout(set = 0, binding = 5) uniform sampler default_sampler;
-
-const mat4 RGB_TO_YUVA_MATRIX = mat4(
-        0.2126, 0.7152, 0.0722, 0.0,
-        -0.1146, -0.3854, 0.5000, 0.0,
-        0.5000, -0.4542, -0.0458, 0.0,
-        0.0, 0.0, 0.0, 1.0
-    );
-
-vec4 YUV_OFFSET = vec4(16.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 0.0);
 
 layout(local_size_x = 16, local_size_y = 16) in;
 void main() {
@@ -39,7 +30,6 @@ void main() {
     yuva.y = rgba.r * -0.169 + rgba.g * -0.331 + rgba.b * 0.5 + 0.5;
     yuva.z = rgba.r * 0.5 + rgba.g * -0.419 + rgba.b * -0.081 + 0.5;
     yuva.w = rgba.a;
-    //vec4 yuva = (RGB_TO_YUVA_MATRIX * color) + YUV_OFFSET;
 
     imageStore(luma, pixel_coords, vec4(yuva.x));
 
