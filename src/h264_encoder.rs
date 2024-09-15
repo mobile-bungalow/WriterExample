@@ -1,6 +1,7 @@
 use crate::{
     conversion::ConversionContext, ConcreteEncoderSettings, Encoder, EncoderSettings, Error,
 };
+use ffi::EAGAIN;
 use godot::classes::Image;
 use godot::prelude::Gd;
 
@@ -12,13 +13,15 @@ pub struct H264Encoder {
     converter: crate::conversion::ConversionContext,
     settings: ConcreteEncoderSettings,
     output_context: format::context::Output,
-    encoder: Option<encoder::Video>,
+    video_encoder: Option<encoder::Video>,
+    audio_encoder: Option<encoder::Audio>,
 }
 
 const STREAM_INDEX: usize = 0;
 
 impl Encoder for H264Encoder {
-    const CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::H264;
+    const VIDEO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::H264;
+    const AUDIO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::FLAC;
 
     const DEFAULT_SETTINGS: ConcreteEncoderSettings = ConcreteEncoderSettings {
         frame_rate: ffmpeg_next::Rational(24, 1),
@@ -52,7 +55,8 @@ impl Encoder for H264Encoder {
             height,
             settings,
             output_context,
-            encoder: None,
+            video_encoder: None,
+            audio_encoder: None,
         })
     }
 
@@ -67,15 +71,30 @@ impl Encoder for H264Encoder {
             .flags()
             .contains(format::Flags::GLOBAL_HEADER);
 
-        let codec = encoder::find(Self::CODEC)
-            .ok_or_else(|| Error::Encoding("Codec not found".to_string()))?;
+        let audio_codec = encoder::find(Self::AUDIO_CODEC)
+            .ok_or_else(|| Error::Encoding("Audio Codec not found".to_string()))?;
 
-        let mut video_stream = self
-            .output_context
-            .add_stream(codec)
-            .map_err(|e| Error::Encoding(format!("Could not add video stream: {}", e)))?;
+        let mut audio_encoder = codec::context::Context::new_with_codec(audio_codec)
+            .encoder()
+            .audio()
+            .map_err(|e| {
+                Error::Encoding(format!("Could not create audio encoder context: {}", e))
+            })?;
 
-        let mut encoder = codec::context::Context::new_with_codec(codec)
+        audio_encoder.set_channel_layout(ChannelLayout::STEREO);
+        audio_encoder.set_format(format::Sample::I32(format::sample::Type::Packed));
+        audio_encoder.set_frame_rate(Some((
+            Self::DEFAULT_SETTINGS.audio_sample_rate as i32,
+            1i32,
+        )));
+        audio_encoder.set_time_base(self.settings.time_base);
+        audio_encoder.set_rate(Self::DEFAULT_SETTINGS.audio_sample_rate as i32);
+        audio_encoder.set_max_bit_rate(320_000);
+
+        let video_codec = encoder::find(Self::VIDEO_CODEC)
+            .ok_or_else(|| Error::Encoding("Video Codec not found".to_string()))?;
+
+        let mut encoder = codec::context::Context::new_with_codec(video_codec)
             .encoder()
             .video()
             .map_err(|e| Error::Encoding(format!("Could not create encoder context: {}", e)))?;
@@ -88,6 +107,7 @@ impl Encoder for H264Encoder {
 
         if global_header {
             encoder.set_flags(codec::Flags::GLOBAL_HEADER);
+            audio_encoder.set_flags(codec::Flags::GLOBAL_HEADER);
         }
 
         let mut dict = Dictionary::new();
@@ -95,11 +115,28 @@ impl Encoder for H264Encoder {
 
         let encoder = encoder
             .open_with(dict)
-            .map_err(|e| Error::Encoding(format!("Could not open encoder: {}", e)))?;
+            .map_err(|e| Error::Encoding(format!("Could not open video encoder: {}", e)))?;
+
+        let audio_encoder = audio_encoder
+            .open()
+            .map_err(|e| Error::Encoding(format!("Could not open audio encoder: {}", e)))?;
+
+        let mut video_stream = self
+            .output_context
+            .add_stream(video_codec)
+            .map_err(|e| Error::Encoding(format!("Could not add video stream: {}", e)))?;
 
         video_stream.set_parameters(&encoder);
 
-        self.encoder = Some(encoder);
+        let mut audio_stream = self
+            .output_context
+            .add_stream(audio_codec)
+            .map_err(|e| Error::Encoding(format!("Could not add audio stream: {}", e)))?;
+
+        audio_stream.set_parameters(&audio_encoder);
+
+        self.video_encoder = Some(encoder);
+        self.audio_encoder = Some(audio_encoder);
 
         self.output_context
             .write_header()
@@ -122,15 +159,20 @@ impl Encoder for H264Encoder {
         frame.set_pts(Some(pts));
 
         let encoder = self
-            .encoder
+            .audio_encoder
             .as_mut()
-            .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
+            .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
 
-        encoder.send_frame(&frame).map_err(|e| {
-            Error::Encoding(format!("Could not send audio frame to encoder: {}", e))
-        })?;
-
-        self.flush()
+        match encoder.send_frame(&frame) {
+            Ok(_) => self.flush(1),
+            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
+            Err(e) => {
+                return Err(Error::Encoding(format!(
+                    "Could not send audio frame to encoder: {}",
+                    e
+                )));
+            }
+        }
     }
 
     fn push_video_frame(&mut self, index: usize, frame_image: Gd<Image>) -> Result<(), Error> {
@@ -150,7 +192,7 @@ impl Encoder for H264Encoder {
         frame.set_pts(Some(pts));
 
         let encoder = self
-            .encoder
+            .video_encoder
             .as_mut()
             .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
 
@@ -158,16 +200,17 @@ impl Encoder for H264Encoder {
             .send_frame(&frame)
             .map_err(|e| Error::Encoding(format!("Could not send frame to encoder: {}", e)))?;
 
-        self.flush()
+        self.flush(0)
     }
 
     fn finish(&mut self) -> Result<(), Error> {
-        if let Some(ref mut encoder) = self.encoder {
+        if let Some(ref mut encoder) = self.video_encoder {
             encoder
                 .send_eof()
                 .map_err(|e| Error::Encoding(format!("Could not send EOF to encoder: {}", e)))?;
 
-            self.flush()?;
+            self.flush(0)?;
+            self.flush(1)?;
         }
 
         self.output_context
@@ -179,21 +222,21 @@ impl Encoder for H264Encoder {
 }
 
 impl H264Encoder {
-    pub fn flush(&mut self) -> Result<(), Error> {
+    pub fn flush(&mut self, audio: usize) -> Result<(), Error> {
         let encoder = self
-            .encoder
+            .video_encoder
             .as_mut()
             .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
 
         let mut packet = Packet::empty();
 
         while encoder.receive_packet(&mut packet).is_ok() {
-            packet.set_stream(STREAM_INDEX);
+            packet.set_stream(STREAM_INDEX + audio);
 
             packet.rescale_ts(
                 self.settings.time_base,
                 self.output_context
-                    .stream(STREAM_INDEX)
+                    .stream(STREAM_INDEX + audio)
                     .unwrap()
                     .time_base(),
             );

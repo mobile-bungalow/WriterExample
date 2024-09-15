@@ -23,8 +23,6 @@ pub fn audio_block_size_per_frame(
     mix_rate: u32,
     frame_rate: u32,
 ) -> u32 {
-    const BIT_DEPTH: u32 = 32;
-
     let channel_ct = match channel_layout {
         SpeakerMode::STEREO => 2,
         SpeakerMode::SURROUND_31 => 4,
@@ -34,9 +32,9 @@ pub fn audio_block_size_per_frame(
     };
 
     // One u32 aligned item
-    let block_alignment = (BIT_DEPTH / 8) * channel_ct;
+    let block_alignment = std::mem::size_of::<i32>() * channel_ct;
 
-    (mix_rate / frame_rate) * block_alignment
+    (mix_rate / frame_rate) * block_alignment as u32
 }
 
 pub fn godot_speaker_mode_to_ffmpeg(channel_layout: SpeakerMode) -> ChannelLayout {

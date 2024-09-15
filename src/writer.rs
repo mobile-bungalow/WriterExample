@@ -149,7 +149,8 @@ impl IMovieWriter for FelliniWriter {
     unsafe fn write_frame(
         &mut self,
         frame_image: Gd<godot::classes::Image>,
-        _audio_frame_block: *const c_void,
+        // actually i32
+        audio_frame_block: *const c_void,
     ) -> godot::global::Error {
         macro_rules! gd_unwrap {
             ($f:expr) => {
@@ -166,8 +167,7 @@ impl IMovieWriter for FelliniWriter {
             };
         }
 
-        //let speaker_mode = self.get_audio_speaker_mode();
-        //let audio_mix_rate = self.get_audio_mix_rate();
+        let speaker_mode = self.get_audio_speaker_mode();
 
         match &mut self.state {
             FelliniState::Recording {
@@ -177,27 +177,23 @@ impl IMovieWriter for FelliniWriter {
                 ..
             } => {
                 if *paused {
-                    *current_frame += 1;
                     return godot::global::Error::OK;
                 }
 
                 gd_unwrap!(encoder_kind.push_video_frame(*current_frame as usize, frame_image));
 
-                //let samples = crate::conversion::audio_block_size_per_frame(
-                //    speaker_mode,
-                //    audio_mix_rate,
-                //    encoder_kind.settings().frame_rate.0 as u32,
-                //);
-                //let speaker_mode = crate::conversion::godot_speaker_mode_to_ffmpeg(speaker_mode);
-                //let sample_ty = ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
-                //let mut audio_frame = frame::Audio::new(sample_ty, samples as usize, speaker_mode);
+                let speaker_mode = crate::conversion::godot_speaker_mode_to_ffmpeg(speaker_mode);
+                let sample_ty = ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
+                let mut audio_frame = frame::Audio::new(sample_ty, 4608, speaker_mode);
 
-                //let byte_ct = samples as usize * std::mem::size_of::<i32>() * 2;
-                //audio_frame.data_mut(0)[..byte_ct].copy_from_slice(std::slice::from_raw_parts(
-                //    audio_frame_block as *const u8,
-                //    byte_ct,
-                //));
-                //gd_unwrap!(encoder_kind.push_audio_frame(*current_frame as usize, audio_frame));
+                let signal = std::slice::from_raw_parts(
+                    audio_frame_block as *const u8,
+                    4608 * std::mem::size_of::<i32>() * 2,
+                );
+
+                audio_frame.data_mut(0).copy_from_slice(&signal);
+
+                gd_unwrap!(encoder_kind.push_audio_frame(*current_frame as usize, audio_frame));
 
                 *current_frame += 1;
             }

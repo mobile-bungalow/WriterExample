@@ -105,7 +105,8 @@ impl ConcreteEncoderSettings {
 }
 
 pub(crate) trait Encoder: Sized {
-    const CODEC: ffmpeg::codec::Id;
+    const VIDEO_CODEC: ffmpeg::codec::Id;
+    const AUDIO_CODEC: ffmpeg::codec::Id;
     const DEFAULT_SETTINGS: ConcreteEncoderSettings;
     const SUPPORTED_CONTAINERS: &'static [&'static str];
 
@@ -134,7 +135,7 @@ pub(crate) enum EncoderKind {
 impl EncoderKind {
     pub fn codec(&self) -> ffmpeg::codec::Id {
         match self {
-            EncoderKind::H264(_) => H264Encoder::CODEC,
+            EncoderKind::H264(_) => H264Encoder::VIDEO_CODEC,
         }
     }
 
