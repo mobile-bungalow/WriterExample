@@ -17,7 +17,9 @@ pub struct H264Encoder {
     audio_encoder: Option<encoder::Audio>,
 }
 
-const STREAM_INDEX: usize = 0;
+const VIDEO_STREAM: usize = 0;
+const AUDIO_STREAM: usize = 1;
+const MAX_BITRATE: usize = 128_000;
 
 impl Encoder for H264Encoder {
     const VIDEO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::H264;
@@ -89,7 +91,7 @@ impl Encoder for H264Encoder {
         )));
         audio_encoder.set_time_base(self.settings.time_base);
         audio_encoder.set_rate(Self::DEFAULT_SETTINGS.audio_sample_rate as i32);
-        audio_encoder.set_max_bit_rate(320_000);
+        audio_encoder.set_max_bit_rate(MAX_BITRATE);
 
         let video_codec = encoder::find(Self::VIDEO_CODEC)
             .ok_or_else(|| Error::Encoding("Video Codec not found".to_string()))?;
@@ -145,6 +147,20 @@ impl Encoder for H264Encoder {
         Ok(())
     }
 
+    fn audio_frame_size(&self) -> u32 {
+        self.audio_encoder.as_ref().map_or(1024, |enc| {
+            if enc.0.codec().map_or(false, |codec| {
+                codec
+                    .capabilities()
+                    .contains(ffmpeg::codec::capabilities::Capabilities::VARIABLE_FRAME_SIZE)
+            }) {
+                1024
+            } else {
+                enc.frame_size()
+            }
+        })
+    }
+
     fn push_audio_frame(
         &mut self,
         index: usize,
@@ -166,7 +182,7 @@ impl Encoder for H264Encoder {
                 .as_mut()
                 .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
             err = encoder.send_frame(&frame);
-            self.flush(1)?;
+            self.flush(AUDIO_STREAM)?;
         }
 
         match err {
@@ -205,7 +221,7 @@ impl Encoder for H264Encoder {
             .send_frame(&frame)
             .map_err(|e| Error::Encoding(format!("Could not send frame to encoder: {}", e)))?;
 
-        self.flush(0)
+        self.flush(VIDEO_STREAM)
     }
 
     fn finish(&mut self) -> Result<(), Error> {
@@ -214,8 +230,8 @@ impl Encoder for H264Encoder {
                 .send_eof()
                 .map_err(|e| Error::Encoding(format!("Could not send EOF to encoder: {}", e)))?;
 
-            self.flush(0)?;
-            self.flush(1)?;
+            self.flush(VIDEO_STREAM)?;
+            self.flush(AUDIO_STREAM)?;
         }
 
         self.output_context
@@ -227,8 +243,8 @@ impl Encoder for H264Encoder {
 }
 
 impl H264Encoder {
-    pub fn flush(&mut self, audio: usize) -> Result<(), Error> {
-        if audio == 1 {
+    pub fn flush(&mut self, stream: usize) -> Result<(), Error> {
+        if stream == AUDIO_STREAM {
             let encoder = self
                 .audio_encoder
                 .as_mut()
@@ -237,12 +253,12 @@ impl H264Encoder {
             let mut packet = Packet::empty();
 
             while encoder.receive_packet(&mut packet).is_ok() {
-                packet.set_stream(STREAM_INDEX + audio);
+                packet.set_stream(AUDIO_STREAM);
 
                 packet.rescale_ts(
                     self.settings.time_base,
                     self.output_context
-                        .stream(STREAM_INDEX + audio)
+                        .stream(AUDIO_STREAM)
                         .unwrap()
                         .time_base(),
                 );
@@ -260,12 +276,12 @@ impl H264Encoder {
             let mut packet = Packet::empty();
 
             while encoder.receive_packet(&mut packet).is_ok() {
-                packet.set_stream(STREAM_INDEX + audio);
+                packet.set_stream(VIDEO_STREAM);
 
                 packet.rescale_ts(
                     self.settings.time_base,
                     self.output_context
-                        .stream(STREAM_INDEX + audio)
+                        .stream(VIDEO_STREAM)
                         .unwrap()
                         .time_base(),
                 );

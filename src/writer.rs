@@ -124,7 +124,6 @@ impl IMovieWriter for FelliniWriter {
         gd_unwrap!(ffmpeg::init());
 
         let path = PathBuf::from(&base_path.to_string());
-        //let ext = path.extension().and_then(|s| s.to_str());
 
         let mut settings = crate::EncoderSettings::default();
         settings.frame_rate = Some((fps as i32, 1i32).into());
@@ -150,6 +149,8 @@ impl IMovieWriter for FelliniWriter {
         &mut self,
         frame_image: Gd<godot::classes::Image>,
         // actually i32
+        // TODO: when this *finally* gives length information use that
+        // We need to know length for the final frame, right now we get fucking doritos bag noises
         audio_frame_block: *const c_void,
     ) -> godot::global::Error {
         macro_rules! gd_unwrap {
@@ -167,7 +168,7 @@ impl IMovieWriter for FelliniWriter {
             };
         }
 
-        let speaker_mode = self.get_audio_speaker_mode();
+        let godot_speaker_mode = self.get_audio_speaker_mode();
 
         match &mut self.state {
             FelliniState::Recording {
@@ -182,14 +183,20 @@ impl IMovieWriter for FelliniWriter {
 
                 gd_unwrap!(encoder_kind.push_video_frame(*current_frame as usize, frame_image));
 
-                let speaker_mode = crate::conversion::godot_speaker_mode_to_ffmpeg(speaker_mode);
-                let sample_ty = ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
-                let mut audio_frame = frame::Audio::new(sample_ty, 4608, speaker_mode);
+                let speaker_mode =
+                    crate::conversion::godot_speaker_mode_to_ffmpeg(godot_speaker_mode);
 
-                let signal = std::slice::from_raw_parts(
-                    audio_frame_block as *const u8,
-                    4608 * std::mem::size_of::<i32>() * 2,
-                );
+                let sample_ty = ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
+
+                let frame_size = encoder_kind.audio_frame_size();
+
+                let mut audio_frame =
+                    frame::Audio::new(sample_ty, frame_size as usize, speaker_mode);
+
+                let block_size =
+                    crate::conversion::audio_array_size(godot_speaker_mode, frame_size);
+
+                let signal = std::slice::from_raw_parts(audio_frame_block as *const u8, block_size);
 
                 audio_frame.data_mut(0).copy_from_slice(&signal);
 

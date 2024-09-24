@@ -121,6 +121,8 @@ pub(crate) trait Encoder: Sized {
 
     fn start(&mut self) -> Result<(), Error>;
 
+    fn audio_frame_size(&self) -> u32;
+
     fn push_video_frame(&mut self, index: usize, frame: Gd<Image>) -> Result<(), Error>;
 
     fn push_audio_frame(&mut self, index: usize, frame: ffmpeg::frame::Audio) -> Result<(), Error>;
@@ -142,6 +144,12 @@ impl EncoderKind {
     pub fn settings(&self) -> &ConcreteEncoderSettings {
         match self {
             EncoderKind::H264(h264) => h264.settings(),
+        }
+    }
+
+    pub fn audio_frame_size(&self) -> u32 {
+        match self {
+            EncoderKind::H264(h264_encoder) => h264_encoder.audio_frame_size(),
         }
     }
 

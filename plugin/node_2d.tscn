@@ -91,6 +91,6 @@ root_node = NodePath("../..")
 libraries = {
 "": SubResource("AnimationLibrary_rbmfu")
 }
-speed_scale = 0.69
 
 [node name="AudioStreamPlayer" type="AudioStreamPlayer" parent="."]
+volume_db = -80.0

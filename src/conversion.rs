@@ -17,24 +17,17 @@ pub fn frame_to_pts(frame_idx: i64, fps: i64, ticks_per_second: i64) -> i64 {
     (seconds * ticks_per_second as f64).round() as i64
 }
 
-// Audio blocks are a u32 c-array.
-pub fn audio_block_size_per_frame(
-    channel_layout: SpeakerMode,
-    mix_rate: u32,
-    frame_rate: u32,
-) -> u32 {
+// Audio blocks are a i32 c-array.
+pub fn audio_array_size(channel_layout: SpeakerMode, sample_ct: u32) -> usize {
     let channel_ct = match channel_layout {
-        SpeakerMode::STEREO => 2,
+        SpeakerMode::STEREO => 2usize,
         SpeakerMode::SURROUND_31 => 4,
         SpeakerMode::SURROUND_51 => 6,
         SpeakerMode::SURROUND_71 => 8,
         _ => 2,
     };
 
-    // One u32 aligned item
-    let block_alignment = std::mem::size_of::<i32>() * channel_ct;
-
-    (mix_rate / frame_rate) * block_alignment as u32
+    sample_ct as usize * std::mem::size_of::<i32>() * channel_ct
 }
 
 pub fn godot_speaker_mode_to_ffmpeg(channel_layout: SpeakerMode) -> ChannelLayout {
