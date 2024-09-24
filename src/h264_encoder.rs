@@ -1,7 +1,7 @@
 use crate::{
     conversion::ConversionContext, ConcreteEncoderSettings, Encoder, EncoderSettings, Error,
 };
-use ffi::EAGAIN;
+use error::EAGAIN;
 use godot::classes::Image;
 use godot::prelude::Gd;
 
@@ -158,14 +158,19 @@ impl Encoder for H264Encoder {
 
         frame.set_pts(Some(pts));
 
-        let encoder = self
-            .audio_encoder
-            .as_mut()
-            .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
+        let mut err = Err(ffmpeg_next::Error::Other { errno: EAGAIN });
 
-        match encoder.send_frame(&frame) {
-            Ok(_) => self.flush(1),
-            Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
+        while let Err(ffmpeg_next::Error::Other { errno: EAGAIN }) = err {
+            let encoder = self
+                .audio_encoder
+                .as_mut()
+                .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
+            err = encoder.send_frame(&frame);
+            self.flush(1)?;
+        }
+
+        match err {
+            Ok(_) => Ok(()),
             Err(e) => {
                 return Err(Error::Encoding(format!(
                     "Could not send audio frame to encoder: {}",
@@ -223,27 +228,52 @@ impl Encoder for H264Encoder {
 
 impl H264Encoder {
     pub fn flush(&mut self, audio: usize) -> Result<(), Error> {
-        let encoder = self
-            .video_encoder
-            .as_mut()
-            .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
+        if audio == 1 {
+            let encoder = self
+                .audio_encoder
+                .as_mut()
+                .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
 
-        let mut packet = Packet::empty();
+            let mut packet = Packet::empty();
 
-        while encoder.receive_packet(&mut packet).is_ok() {
-            packet.set_stream(STREAM_INDEX + audio);
+            while encoder.receive_packet(&mut packet).is_ok() {
+                packet.set_stream(STREAM_INDEX + audio);
 
-            packet.rescale_ts(
-                self.settings.time_base,
-                self.output_context
-                    .stream(STREAM_INDEX + audio)
-                    .unwrap()
-                    .time_base(),
-            );
+                packet.rescale_ts(
+                    self.settings.time_base,
+                    self.output_context
+                        .stream(STREAM_INDEX + audio)
+                        .unwrap()
+                        .time_base(),
+                );
 
-            packet
-                .write_interleaved(&mut self.output_context)
-                .map_err(|e| Error::Encoding(format!("Could not write packet: {}", e)))?;
+                packet
+                    .write_interleaved(&mut self.output_context)
+                    .map_err(|e| Error::Encoding(format!("Could not write packet: {}", e)))?;
+            }
+        } else {
+            let encoder = self
+                .video_encoder
+                .as_mut()
+                .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
+
+            let mut packet = Packet::empty();
+
+            while encoder.receive_packet(&mut packet).is_ok() {
+                packet.set_stream(STREAM_INDEX + audio);
+
+                packet.rescale_ts(
+                    self.settings.time_base,
+                    self.output_context
+                        .stream(STREAM_INDEX + audio)
+                        .unwrap()
+                        .time_base(),
+                );
+
+                packet
+                    .write_interleaved(&mut self.output_context)
+                    .map_err(|e| Error::Encoding(format!("Could not write packet: {}", e)))?;
+            }
         }
 
         Ok(())
