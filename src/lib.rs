@@ -1,7 +1,9 @@
+mod av1_encoder;
 mod conversion;
 mod h264_encoder;
 mod writer;
 
+use av1_encoder::Av1Encoder;
 use godot::classes::{Engine, Image, MovieWriter};
 use godot::prelude::*;
 
@@ -68,6 +70,7 @@ pub struct ConcreteEncoderSettings {
     // The format that incoming frames must be encoded in
     pub pixel_format: ffmpeg::format::Pixel,
     pub audio_sample_rate: u32,
+    pub audio_enabled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -132,54 +135,63 @@ pub(crate) trait Encoder: Sized {
 
 pub(crate) enum EncoderKind {
     H264(H264Encoder),
+    Av1(Av1Encoder),
 }
 
 impl EncoderKind {
     pub fn codec(&self) -> ffmpeg::codec::Id {
         match self {
             EncoderKind::H264(_) => H264Encoder::VIDEO_CODEC,
+            EncoderKind::Av1(_) => Av1Encoder::VIDEO_CODEC,
         }
     }
 
     pub fn settings(&self) -> &ConcreteEncoderSettings {
         match self {
             EncoderKind::H264(h264) => h264.settings(),
+            EncoderKind::Av1(av1) => av1.settings(),
         }
     }
 
     pub fn audio_frame_size(&self) -> u32 {
         match self {
             EncoderKind::H264(h264_encoder) => h264_encoder.audio_frame_size(),
+            EncoderKind::Av1(av1_enc) => av1_enc.audio_frame_size(),
         }
     }
 
     pub fn supported_containers(&self) -> &[&str] {
         match self {
             EncoderKind::H264(_) => H264Encoder::SUPPORTED_CONTAINERS,
+            EncoderKind::Av1(_) => Av1Encoder::SUPPORTED_CONTAINERS,
         }
     }
 
     pub fn start(&mut self) -> Result<(), Error> {
         match self {
             EncoderKind::H264(h264) => h264.start(),
+            EncoderKind::Av1(av1) => av1.start(),
         }
     }
 
     pub fn finish(&mut self) -> Result<(), Error> {
         match self {
             EncoderKind::H264(h264) => h264.finish(),
+            EncoderKind::Av1(av1) => av1.finish(),
         }
     }
 
     pub fn push_video_frame(&mut self, index: usize, frame: Gd<Image>) -> Result<(), Error> {
         match self {
             EncoderKind::H264(h264) => h264.push_video_frame(index, frame),
+            EncoderKind::Av1(av1) => av1.push_video_frame(index, frame),
         }
     }
 
     fn push_audio_frame(&mut self, index: usize, frame: ffmpeg::frame::Audio) -> Result<(), Error> {
         match self {
             EncoderKind::H264(h264) => h264.push_audio_frame(index, frame),
+            EncoderKind::Av1(av1) => av1.push_audio_frame(index, frame),
         }
     }
 }

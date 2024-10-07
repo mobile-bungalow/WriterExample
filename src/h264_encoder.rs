@@ -30,6 +30,7 @@ impl Encoder for H264Encoder {
         time_base: ffmpeg_next::Rational(1, 90_000),
         pixel_format: ffmpeg::format::Pixel::YUV420P,
         audio_sample_rate: 44_100,
+        audio_enabled: true,
     };
 
     const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mp4"];
@@ -89,6 +90,7 @@ impl Encoder for H264Encoder {
             Self::DEFAULT_SETTINGS.audio_sample_rate as i32,
             1i32,
         )));
+        audio_encoder.set_compression(Some(4));
         audio_encoder.set_time_base(self.settings.time_base);
         audio_encoder.set_rate(Self::DEFAULT_SETTINGS.audio_sample_rate as i32);
         audio_encoder.set_max_bit_rate(MAX_BITRATE);
