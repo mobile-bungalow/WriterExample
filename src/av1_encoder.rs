@@ -102,7 +102,7 @@ impl Encoder for Av1Encoder {
             None
         };
 
-        let video_codec = encoder::find(Self::VIDEO_CODEC)
+        let video_codec = encoder::find_by_name("libsvtav1")
             .ok_or_else(|| Error::Encoding("Video Codec not found".to_string()))?;
 
         let mut encoder = codec::context::Context::new_with_codec(video_codec)
@@ -118,7 +118,7 @@ impl Encoder for Av1Encoder {
         encoder.set_bit_rate(MAX_VIDEO_BITRATE);
         encoder.set_threading(ffmpeg::threading::Config {
             kind: threading::Type::Frame,
-            count: 32,
+            count: 8,
         });
 
         if global_header {
@@ -129,11 +129,8 @@ impl Encoder for Av1Encoder {
         }
 
         let mut dict = Dictionary::new();
-        dict.set("crf", "23");
         dict.set("cpu-used", "8");
         dict.set("tiles", "4x4");
-        dict.set("row-mt", "1");
-        dict.set("enable-keyframe-filtering", "0");
 
         let encoder = encoder
             .open_with(dict)
