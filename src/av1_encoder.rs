@@ -19,7 +19,8 @@ pub struct Av1Encoder {
 
 const VIDEO_STREAM: usize = 0;
 const AUDIO_STREAM: usize = 1;
-const MAX_BITRATE: usize = 128_000;
+const MAX_AUDIO_BITRATE: usize = 128_000;
+const MAX_VIDEO_BITRATE: usize = 200_000;
 
 impl Encoder for Av1Encoder {
     const VIDEO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::AV1;
@@ -33,7 +34,7 @@ impl Encoder for Av1Encoder {
         audio_enabled: false,
     };
 
-    const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mkv"];
+    const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mkv", "mp4", "webm"];
 
     fn new(
         width: u32,
@@ -94,7 +95,7 @@ impl Encoder for Av1Encoder {
             audio_encoder.set_compression(Some(4));
             audio_encoder.set_time_base(self.settings.time_base);
             audio_encoder.set_rate(Self::DEFAULT_SETTINGS.audio_sample_rate as i32);
-            audio_encoder.set_max_bit_rate(MAX_BITRATE);
+            audio_encoder.set_max_bit_rate(MAX_AUDIO_BITRATE);
 
             Some(audio_encoder)
         } else {
@@ -114,6 +115,11 @@ impl Encoder for Av1Encoder {
         encoder.set_time_base(self.settings.time_base);
         encoder.set_format(self.settings.pixel_format);
         encoder.set_frame_rate(Some(self.settings.frame_rate));
+        encoder.set_bit_rate(MAX_VIDEO_BITRATE);
+        encoder.set_threading(ffmpeg::threading::Config {
+            kind: threading::Type::Frame,
+            count: 32,
+        });
 
         if global_header {
             encoder.set_flags(codec::Flags::GLOBAL_HEADER);
@@ -122,12 +128,15 @@ impl Encoder for Av1Encoder {
             }
         }
 
-        //let mut dict = Dictionary::new();
-        //dict.set("preset", "medium");
+        let mut dict = Dictionary::new();
+        dict.set("crf", "23");
+        dict.set("cpu-used", "8");
+        dict.set("tiles", "4x4");
+        dict.set("row-mt", "1");
+        dict.set("enable-keyframe-filtering", "0");
 
         let encoder = encoder
-            .open()
-            //.open_with(dict)
+            .open_with(dict)
             .map_err(|e| Error::Encoding(format!("Could not open video encoder: {}", e)))?;
 
         if let Some(audio_encoder) = audio_enc {
@@ -227,15 +236,22 @@ impl Encoder for Av1Encoder {
 
         let mut err = Err(ffmpeg_next::Error::Other { errno: EAGAIN });
 
+        let encoder = self
+            .video_encoder
+            .as_mut()
+            .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
+
         while let Err(ffmpeg_next::Error::Other { errno: EAGAIN }) = err {
-            let encoder = self
-                .video_encoder
-                .as_mut()
-                .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
             err = encoder.send_frame(&frame);
         }
 
-        self.flush(VIDEO_STREAM)
+        if err.is_ok() {
+            self.flush(VIDEO_STREAM)
+        } else {
+            Err(Error::Encoding(format!(
+                "Packet could not be sent to encoder {err:?}"
+            )))
+        }
     }
 
     fn finish(&mut self) -> Result<(), Error> {
@@ -245,7 +261,10 @@ impl Encoder for Av1Encoder {
                 .map_err(|e| Error::Encoding(format!("Could not send EOF to encoder: {}", e)))?;
 
             self.flush(VIDEO_STREAM)?;
-            self.flush(AUDIO_STREAM)?;
+
+            if self.settings().audio_enabled {
+                self.flush(AUDIO_STREAM)?;
+            }
         }
 
         self.output_context
@@ -288,18 +307,8 @@ impl Av1Encoder {
                 .ok_or_else(|| Error::Encoding("Encoder not initialized".to_string()))?;
 
             let mut packet = Packet::empty();
-            let mut tries = 0;
-            while matches!(
-                encoder.receive_packet(&mut packet),
-                Err(ffmpeg_next::Error::Other { errno: EAGAIN })
-            ) && tries < 10
-            {
-                dbg!();
-                tries += 1;
-            }
 
-            while encoder.receive_packet(&mut packet).is_ok() {
-                dbg!();
+            while let Ok(_) = encoder.receive_packet(&mut packet) {
                 packet.set_stream(VIDEO_STREAM);
 
                 packet.rescale_ts(
