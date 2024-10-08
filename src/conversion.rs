@@ -7,7 +7,7 @@ use godot::engine::rendering_device::{
 };
 
 use crate::Error;
-use godot::classes::{DisplayServer, Image, RenderingServer};
+use godot::classes::{Image, RenderingServer};
 use godot::engine::{RdSamplerState, RdUniform, RenderingDevice};
 use godot::prelude::*;
 

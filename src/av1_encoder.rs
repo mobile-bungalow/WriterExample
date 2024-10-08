@@ -24,14 +24,14 @@ const MAX_VIDEO_BITRATE: usize = 200_000;
 
 impl Encoder for Av1Encoder {
     const VIDEO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::AV1;
-    const AUDIO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::FLAC;
+    const AUDIO_CODEC: ffmpeg::codec::Id = ffmpeg::codec::Id::OPUS;
 
     const DEFAULT_SETTINGS: ConcreteEncoderSettings = ConcreteEncoderSettings {
         frame_rate: ffmpeg_next::Rational(24, 1),
         time_base: ffmpeg_next::Rational(1, 90_000),
         pixel_format: ffmpeg::format::Pixel::YUV420P,
-        audio_sample_rate: 44_100,
-        audio_enabled: false,
+        audio_sample_rate: 48_000,
+        audio_enabled: true,
     };
 
     const SUPPORTED_CONTAINERS: &'static [&'static str] = &["mkv", "mp4", "webm"];
@@ -78,7 +78,7 @@ impl Encoder for Av1Encoder {
         let audio_codec = encoder::find(Self::AUDIO_CODEC)
             .ok_or_else(|| Error::Encoding("Audio Codec not found".to_string()))?;
 
-        let mut audio_enc = if self.settings().audio_enabled {
+        let mut audio_enc = if self.settings.audio_enabled {
             let mut audio_encoder = codec::context::Context::new_with_codec(audio_codec)
                 .encoder()
                 .audio()
@@ -87,7 +87,7 @@ impl Encoder for Av1Encoder {
                 })?;
 
             audio_encoder.set_channel_layout(ChannelLayout::STEREO);
-            audio_encoder.set_format(format::Sample::I32(format::sample::Type::Packed));
+            audio_encoder.set_format(format::Sample::F32(format::sample::Type::Packed));
             audio_encoder.set_frame_rate(Some((
                 Self::DEFAULT_SETTINGS.audio_sample_rate as i32,
                 1i32,
@@ -136,6 +136,13 @@ impl Encoder for Av1Encoder {
             .open_with(dict)
             .map_err(|e| Error::Encoding(format!("Could not open video encoder: {}", e)))?;
 
+        let mut video_stream = self
+            .output_context
+            .add_stream(video_codec)
+            .map_err(|e| Error::Encoding(format!("Could not add video stream: {}", e)))?;
+
+        video_stream.set_parameters(&encoder);
+
         if let Some(audio_encoder) = audio_enc {
             let audio_encoder = audio_encoder
                 .open()
@@ -149,13 +156,6 @@ impl Encoder for Av1Encoder {
             audio_stream.set_parameters(&audio_encoder);
             self.audio_encoder = Some(audio_encoder);
         }
-
-        let mut video_stream = self
-            .output_context
-            .add_stream(video_codec)
-            .map_err(|e| Error::Encoding(format!("Could not add video stream: {}", e)))?;
-
-        video_stream.set_parameters(&encoder);
 
         self.video_encoder = Some(encoder);
 
@@ -193,19 +193,18 @@ impl Encoder for Av1Encoder {
 
         frame.set_pts(Some(pts));
 
-        let mut err = Err(ffmpeg_next::Error::Other { errno: EAGAIN });
+        let encoder = self
+            .audio_encoder
+            .as_mut()
+            .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
 
+        let mut err = Err(ffmpeg_next::Error::Other { errno: EAGAIN });
         while let Err(ffmpeg_next::Error::Other { errno: EAGAIN }) = err {
-            let encoder = self
-                .audio_encoder
-                .as_mut()
-                .ok_or_else(|| Error::Encoding("audio Encoder not initialized".to_string()))?;
             err = encoder.send_frame(&frame);
-            self.flush(AUDIO_STREAM)?;
         }
 
         match err {
-            Ok(_) => Ok(()),
+            Ok(_) => self.flush(AUDIO_STREAM),
             Err(e) => {
                 return Err(Error::Encoding(format!(
                     "Could not send audio frame to encoder: {}",
@@ -242,12 +241,11 @@ impl Encoder for Av1Encoder {
             err = encoder.send_frame(&frame);
         }
 
-        if err.is_ok() {
-            self.flush(VIDEO_STREAM)
-        } else {
-            Err(Error::Encoding(format!(
-                "Packet could not be sent to encoder {err:?}"
-            )))
+        match err {
+            Ok(()) => self.flush(VIDEO_STREAM),
+            Err(e) => Err(Error::Encoding(format!(
+                "Packet could not be sent to video encoder {e:?}"
+            ))),
         }
     }
 

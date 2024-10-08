@@ -6,6 +6,8 @@ use godot::classes::MovieWriter;
 use godot::global::Error as GdError;
 use godot::prelude::*;
 use std::ffi::c_void;
+use std::i16;
+use std::i32;
 use std::path::PathBuf;
 
 use crate::av1_encoder::Av1Encoder;
@@ -13,19 +15,11 @@ use crate::h264_encoder::H264Encoder;
 use crate::Encoder;
 use crate::EncoderKind;
 
-pub struct CommonSettings {
-    viewport: Option<Gd<godot::classes::Viewport>>,
-    export_alpha_matte: bool,
-    export_motion_vectors: bool,
-}
+pub struct CommonSettings {}
 
 impl Default for CommonSettings {
     fn default() -> Self {
-        Self {
-            viewport: None,
-            export_alpha_matte: false,
-            export_motion_vectors: false,
-        }
+        Self {}
     }
 }
 
@@ -189,7 +183,7 @@ impl IMovieWriter for FelliniWriter {
                         crate::conversion::godot_speaker_mode_to_ffmpeg(godot_speaker_mode);
 
                     let sample_ty =
-                        ffmpeg::format::Sample::I32(ffmpeg::format::sample::Type::Packed);
+                        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed);
 
                     let frame_size = encoder_kind.audio_frame_size();
 
@@ -200,9 +194,14 @@ impl IMovieWriter for FelliniWriter {
                         crate::conversion::audio_array_size(godot_speaker_mode, frame_size);
 
                     let signal =
-                        std::slice::from_raw_parts(audio_frame_block as *const u8, block_size);
+                        std::slice::from_raw_parts(audio_frame_block as *const i32, block_size / 4);
 
-                    audio_frame.data_mut(0).copy_from_slice(&signal);
+                    audio_frame.data_mut(0).fill(0);
+                    for (i, sample) in signal.iter().enumerate() {
+                        let flt = *sample as f32 / i32::MAX as f32;
+                        let i = i * 4;
+                        audio_frame.data_mut(0)[i..i + 4].copy_from_slice(&flt.to_le_bytes());
+                    }
 
                     gd_unwrap!(encoder_kind.push_audio_frame(*current_frame as usize, audio_frame));
                 }
